@@ -9,6 +9,10 @@ Two responsibilities:
 No test framework, no result reporting, no fixtures — keep this file small.
 """
 
+import sys
+import rospy
+from gazebo_msgs.srv import GetModelState
+
 # ---------------------------------------------------------------------------
 # Constants — mirror project_scene_spawn.yaml + launch files.
 # Update here when Team 8 renames anything in their world.
@@ -30,12 +34,28 @@ FRANKA_NAMESPACES = ("franka1", "franka2")
 def wait_for_sim(timeout=30):
     # Poll /gazebo/get_model_state until it answers, or exit with a clear
     # "Run `roslaunch meam520_labs project.launch`" message.
-    pass
+    try:
+        rospy.wait_for_service('/gazebo/get_model_state', timeout=timeout)
+    except rospy.ROSException as e:
+        print("Error: wait_for_service failed")
+        print(f"Exception type: {type(e).__name__}")
+        print(f"Exception message: {e}")
+        print("If sim is not running, run 'roslaunch meam520_labs project.launch' first")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: unexpected exception: {type(e).__name__}: {e}")
+        sys.exit(1)
 
 
 def get_pose(model_name):
     # Wrap /gazebo/get_model_state. Returns geometry_msgs/Pose.
-    pass
+    get_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
+    try:
+        response = get_state(model_name, '')
+    except rospy.ServiceException as e:
+        print(f"ERROR: get_pose('{model_name}') failed: {e}")
+        sys.exit(1)
+    return response.pose
 
 
 def set_pose(model_name, x, y, z, yaw=0):
