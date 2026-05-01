@@ -24,7 +24,7 @@ from tf.transformations import quaternion_from_euler
 CUP_MODEL = "cup_z_021"                  # cups[0].model_name in scene yaml
 DISPENSER_MODEL = "dispenser1"           # dispensers[0]
 TURNTABLE_MODEL = "turntable"            # tables[0]
-DISPENSER_LEVER_JOINT = None             # TBD — read from dispenser.urdf
+DISPENSER_LEVER_JOINT = "lever"          # from dispenser.urdf <joint name="lever">
 TURNTABLE_JOINT = None                   # TBD — read from turntable.xacro
 CUP_SDF_PATH = "meam520_labs/meshes/cup_final/model.sdf"
 FRANKA_NAMESPACES = ("franka1", "franka2")
