@@ -14,7 +14,21 @@ a consumer team explicitly asks.
 
 import rospy
 from trail_mix.interface import TrailMixInterface as TMI
-from helpers import build_robot_status
+
+try:
+    from helpers import build_robot_status
+except ImportError:
+    def build_robot_status(order_id, robot_group, action, status, detail=""):
+        msg = TMI.robot_status.msg_type()
+        msg.order_id = order_id
+        msg.robot_group = robot_group
+        msg.action = action
+        msg.status = status
+        if hasattr(msg, "timestamp"):
+            msg.timestamp = rospy.Time.now()
+        if hasattr(msg, "detail"):
+            msg.detail = detail
+        return msg
 
 # Hardcoded plausible durations (seconds) — service robot actions only.
 SERVICE_ACTION_DURATIONS = {
@@ -29,27 +43,53 @@ SERVICE_ACTION_DURATIONS = {
 def on_task_cmd(msg, status_pub):
     if msg.robot_group != "service":
         return
+
     if msg.action not in SERVICE_ACTION_DURATIONS:
+        detail = "service_mock does not handle action %r" % msg.action
+        rospy.logwarn(detail)
+        status_pub.publish(
+            build_robot_status(
+                msg.order_id,
+                "service",
+                msg.action,
+                "error",
+                detail=detail,
+            )
+        )
         return
-    rospy.loginfo("service_mock: %s order=%d (sleep %.1fs)",
-                  msg.action, msg.order_id, SERVICE_ACTION_DURATIONS[msg.action])
-    status_pub.publish(build_robot_status(
-        order_id=msg.order_id, robot_group="service",
-        action=msg.action, status="in_progress",
-    ))
+
+    rospy.loginfo(
+        "service_mock: order %s starting %s", msg.order_id, msg.action
+    )
+    status_pub.publish(
+        build_robot_status(
+            msg.order_id,
+            "service",
+            msg.action,
+            "in_progress",
+        )
+    )
+
     rospy.sleep(SERVICE_ACTION_DURATIONS[msg.action])
-    status_pub.publish(build_robot_status(
-        order_id=msg.order_id, robot_group="service",
-        action=msg.action, status="done",
-    ))
+
+    rospy.loginfo(
+        "service_mock: order %s finished %s", msg.order_id, msg.action
+    )
+    status_pub.publish(
+        build_robot_status(
+            msg.order_id,
+            "service",
+            msg.action,
+            "done",
+        )
+    )
 
 
 def main():
     rospy.init_node("service_mock")
     status_pub = TMI.robot_status.publisher(queue_size=10)
-    TMI.task_cmd.subscriber(lambda m: on_task_cmd(m, status_pub))
-    rospy.loginfo("service_mock ready (actions: %s)",
-                  list(SERVICE_ACTION_DURATIONS))
+    TMI.task_cmd.subscriber(lambda msg: on_task_cmd(msg, status_pub))
+    rospy.loginfo("service_mock ready")
     rospy.spin()
 
 
