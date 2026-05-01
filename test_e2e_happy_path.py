@@ -67,7 +67,9 @@ def main():
     procs = start_mocks()
     try:
         cmd_pub = TMI.task_cmd.publisher(queue_size=10)
-        # Wait for both mocks to subscribe to task_cmd.
+        # Wait for both mocks to subscribe to task_cmd. Wall-clock here is
+        # fine because we're waiting on Python subprocess startup, not on
+        # any sim-time-driven mock work.
         deadline = time.time() + 10.0
         while cmd_pub.get_num_connections() < 2 and time.time() < deadline:
             time.sleep(0.1)
@@ -82,11 +84,14 @@ def main():
             ))
             time.sleep(0.2)
 
-        # Wait up to 30s for every (group, action) to come back as "done".
+        # Wait up to 30 SIM seconds for every (group, action) to come back
+        # as "done". Use rospy.Time / rospy.sleep, not time.time / time.sleep,
+        # because the mocks use rospy.sleep — if Gazebo's RTF is < 1, a wall-
+        # clock deadline expires long before mock work finishes in sim time.
         expected = set(HAPPY_PATH)
-        deadline = time.time() + 30.0
-        while time.time() < deadline and not expected.issubset(done_pairs):
-            time.sleep(0.2)
+        deadline = rospy.Time.now() + rospy.Duration(30.0)
+        while rospy.Time.now() < deadline and not expected.issubset(done_pairs):
+            rospy.sleep(0.2)
 
         missing = sorted(expected - done_pairs)
         ok = not missing

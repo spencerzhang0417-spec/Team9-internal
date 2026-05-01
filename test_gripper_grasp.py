@@ -23,12 +23,13 @@ README.md.
 import sys
 import rospy
 from core.interfaces import ArmController
-from helpers import wait_for_sim
+from helpers import wait_for_sim, require_models
 
 
 def main():
     rospy.init_node("test_gripper_grasp", anonymous=True)
     wait_for_sim()
+    require_models("test_gripper_grasp", "franka1")
     arm = ArmController(id=1)
     arm.move_to_neutral()
     try:

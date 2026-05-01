@@ -11,10 +11,16 @@ No test framework, no result reporting, no fixtures — keep this file small.
 
 import sys
 import rospy
-from gazebo_msgs.srv import GetModelState, SetModelState, GetLinkState
+from gazebo_msgs.srv import GetModelState, SetModelState, GetLinkState, GetWorldProperties
 from gazebo_msgs.msg import ModelState
 from geometry_msgs.msg import Pose, Point, Quaternion
 from tf.transformations import quaternion_from_euler
+
+# Exit codes for tests:
+#   0 = PASS, 1 = FAIL (component broken), 2 = SKIP (component not deployed)
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_SKIP = 2
 
 # ---------------------------------------------------------------------------
 # Constants — mirror project_scene_spawn.yaml + launch files.
@@ -24,9 +30,9 @@ from tf.transformations import quaternion_from_euler
 CUP_MODEL = "cup_z_021"                  # cups[0].model_name in scene yaml
 DISPENSER_MODEL = "dispenser1"           # dispensers[0]
 TURNTABLE_MODEL = "turntable"            # tables[0]
-DISPENSER_LEVER_JOINT = None             # TBD — read from dispenser.urdf
-TURNTABLE_JOINT = None                   # TBD — read from turntable.xacro
-CUP_SDF_PATH = "meam520_labs/meshes/cup_final/model.sdf"
+TURNTABLE_ROTATING_LINK = "turntable::upper_base"   # rotating link per turntable.xacro
+DISPENSER_LEVER_JOINT = "lever"          # dispenser.urdf joint name
+TURNTABLE_JOINT = "base_rotate"          # turntable.xacro continuous joint
 FRANKA_NAMESPACES = ("franka1", "franka2")
 
 
@@ -78,6 +84,41 @@ def set_pose(model_name, x, y, z, yaw=0):
         sys.exit(1)
 
 
+def list_gazebo_models():
+    # Wrap /gazebo/get_world_properties. Returns list of model name strings
+    # currently in the sim. Used by deployment probe + per-test preflight.
+    proxy = rospy.ServiceProxy('/gazebo/get_world_properties', GetWorldProperties)
+    try:
+        return list(proxy().model_names)
+    except rospy.ServiceException as e:
+        print(f"ERROR: list_gazebo_models() failed: {e}")
+        return []
+
+
+def require_models(test_name, *names):
+    # Preflight check used by tests to skip cleanly when Team 8 hasn't deployed
+    # a required model yet (vs failing as if the component were broken).
+    # Exits with EXIT_SKIP if any are missing; otherwise returns silently.
+    models = set(list_gazebo_models())
+    missing = [n for n in names if n not in models]
+    if missing:
+        print(f"SKIP {test_name} (models not deployed yet: {missing})")
+        sys.exit(EXIT_SKIP)
+
+
+def controller_manager_running(namespace, timeout=1.0):
+    # True iff /{namespace}/controller_manager/list_controllers service is up.
+    # Used by the deployment probe to see whether each robot's controller
+    # stack has loaded. Doesn't tell us _which_ controllers are loaded —
+    # just whether the controller_manager itself is alive.
+    service_name = f"/{namespace}/controller_manager/list_controllers"
+    try:
+        rospy.wait_for_service(service_name, timeout=timeout)
+        return True
+    except rospy.ROSException:
+        return False
+
+
 def get_link_pose(link_name):
     # Wrap /gazebo/get_link_state. link_name is "model::link" (e.g. "franka1::panda_hand").
     # Bypasses tf because project.launch's world->franka1/base static transform is
@@ -90,17 +131,6 @@ def get_link_pose(link_name):
         print(f"ERROR: get_link_pose('{link_name}') failed: {e}")
         sys.exit(1)
     return response.link_state.pose
-
-
-def spawn_cup(name, x, y, z):
-    # Wrap /gazebo/spawn_sdf_model using CUP_SDF_PATH (same path
-    # scene_model_spawner.py uses).
-    pass
-
-
-def delete_model(name):
-    # Wrap /gazebo/delete_model. Cleanup after a test that spawned something.
-    pass
 
 
 # ---------------------------------------------------------------------------

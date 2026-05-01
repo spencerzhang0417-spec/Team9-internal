@@ -9,7 +9,7 @@ Catches:   world-physics regressions, friction tuning, cup not settled at spawn.
 import sys
 import rospy
 import math
-from helpers import wait_for_sim, get_pose, CUP_MODEL
+from helpers import wait_for_sim, get_pose, require_models, CUP_MODEL
 
 
 def euclidean(p0_pos, p1_pos):
@@ -22,6 +22,7 @@ def euclidean(p0_pos, p1_pos):
 def main():
     rospy.init_node("test_cup_stack", anonymous=True)
     wait_for_sim()
+    require_models("test_cup_stack", CUP_MODEL)
     p0 = get_pose(CUP_MODEL)
     rospy.sleep(5.0)
     p1 = get_pose(CUP_MODEL)

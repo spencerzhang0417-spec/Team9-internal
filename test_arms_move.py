@@ -13,7 +13,7 @@ import sys
 import numpy as np
 import rospy
 from core.interfaces import ArmController
-from helpers import wait_for_sim, FRANKA_NAMESPACES
+from helpers import wait_for_sim, require_models
 
 
 def reached(arm, target, tol=0.05):
@@ -29,6 +29,7 @@ def reached(arm, target, tol=0.05):
 def main():
     rospy.init_node("test_arms_move", anonymous=True)
     wait_for_sim()
+    require_models("test_arms_move", "franka1", "franka2")
     results = [] #store two test results
     for arm_id in (1,2):
         arm = ArmController(id=arm_id) #create arm controller

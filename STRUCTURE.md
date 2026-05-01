@@ -106,10 +106,10 @@ These mirror the names in [project_scene_spawn.yaml](../ros/meam520_labs/config/
 | `CUP_MODEL` | `"cup_z_021"` | [project_scene_spawn.yaml](../ros/meam520_labs/config/project_scene_spawn.yaml) `cups[0].model_name` |
 | `DISPENSER_MODEL` | `"dispenser1"` | same yaml, `dispensers[0]` |
 | `TURNTABLE_MODEL` | `"turntable"` | same yaml, `tables[0]` |
-| `DISPENSER_LEVER_JOINT` | TBD when we read [dispenser.urdf](../ros/meam520_labs/urdf/dispenser.urdf) | dispenser URDF |
-| `TURNTABLE_JOINT` | TBD when we read [turntable.xacro](../ros/meam520_labs/urdf/turntable.xacro) | turntable xacro |
-| `CUP_SDF_PATH` | `meam520_labs/meshes/cup_final/model.sdf` | [scene_model_spawner.py](../ros/meam520_labs/scripts/scene_model_spawner.py) |
-| `FRANKA_NAMESPACES` | `("franka1", "franka2")` | [project.launch](../ros/meam520_labs/launch/project.launch) |
+| `DISPENSER_LEVER_JOINT` | `"lever"` | [dispenser.urdf](../ros/meam520_labs/urdf/dispenser.urdf) joint |
+| `TURNTABLE_JOINT` | `"base_rotate"` | [turntable.xacro](../ros/meam520_labs/urdf/turntable.xacro) continuous joint |
+| `TURNTABLE_ROTATING_LINK` | `"turntable::upper_base"` | the rotating child of `base_rotate` per turntable.xacro; queried via `get_link_pose` |
+| `FRANKA_NAMESPACES` | `("franka1", "franka2")` | [project.launch](../ros/meam520_labs/launch/project.launch) — currently imported by `test_arms_move.py` but not referenced; flagged for cleanup |
 
 Topic strings come from `TrailMixInterface` attributes — never hardcoded here.
 
@@ -119,10 +119,11 @@ Topic strings come from `TrailMixInterface` attributes — never hardcoded here.
 | --- | --- |
 | `wait_for_sim(timeout=30)` | Polls `/gazebo/get_model_state`. If Gazebo isn't up, exits with a clear "Run `roslaunch meam520_labs project.launch`" message instead of a stack trace. |
 | `get_pose(model_name)` | Wraps `/gazebo/get_model_state`, returns `Pose`. |
-| `set_pose(model_name, x, y, z, yaw=0)` | Wraps `/gazebo/set_model_state` for seeding fixtures at known poses. |
-| `get_link_pose(link_name)` | Wraps `/gazebo/get_link_state`. `link_name` is `"model::link"` (e.g. `"franka1::panda_hand"`). Bypasses tf because the `world → franka1/base` static transform in [project.launch](../ros/meam520_labs/launch/project.launch) is identity while Gazebo spawns franka1 at `y=-0.99`. |
-| `spawn_cup(name, x, y, z)` | Wraps `/gazebo/spawn_sdf_model` using the cup SDF at `meam520_labs/meshes/cup_final/model.sdf` (same path [scene_model_spawner.py](../ros/meam520_labs/scripts/scene_model_spawner.py) uses). |
-| `delete_model(name)` | Cleanup after a test that spawned something. |
+| `set_pose(model_name, x, y, z, yaw=0)` | Wraps `/gazebo/set_model_state`. Used to teleport an existing cup onto the turntable for `test_turntable.py` and into the gripper for `test_gripper_grasp.py` (when it tested contact physics — now scoped down). |
+| `get_link_pose(link_name)` | Wraps `/gazebo/get_link_state`. `link_name` is `"model::link"` (e.g. `"turntable::upper_base"` for the rotating link, or `"franka1::panda_leftfinger"`). Bypasses tf because the `world → franka1/base` static transform in [project.launch](../ros/meam520_labs/launch/project.launch) is identity while Gazebo spawns franka1 at `y=-0.99`. |
+| `list_gazebo_models()` | Wraps `/gazebo/get_world_properties`. Returns a list of model names currently in the sim. |
+| `require_models(test_name, *names)` | Preflight check called at the top of each Phase 1 test. If any of `*names` are missing from the Gazebo world, prints `SKIP <test_name> (...)` and exits with `EXIT_SKIP` (=2) so `run_all.sh` can distinguish "not deployed yet" from "broken". |
+| `controller_manager_running(namespace, timeout=1.0)` | Returns True iff `/{namespace}/controller_manager/list_controllers` answers within `timeout`. Used by `test_deployment.py` to probe whether each robot's controller stack is alive. |
 
 ### TrailMix helpers (avoid `order_id` validator gotcha)
 
@@ -137,6 +138,15 @@ No test framework, no result reporting, no fixture decorators here — keep this
 
 ---
 
+## Phase 0 — deployment readiness probe
+
+### `test_deployment.py` — what's actually in the sim right now?
+
+- Calls `/gazebo/get_world_properties` to list spawned models. Probes each expected namespace's `controller_manager/list_controllers` service to see whether the controller stack is alive.
+- Compares against an `EXPECTED` dict mirroring the project spec: 4 Frankas (2 service + 2 toppings), 2 turntables (one per line), 6 dispensers, 4 cups in the stack. Reports per-category status: `OK`, `PARTIAL (n/m)`, or `NOT DEPLOYED`.
+- **Always exits 0** — diagnostic only. Use the output to know what other tests will run vs SKIP on this sim.
+- **Update path:** when Team 8 ships line 2, update line-2 names in `EXPECTED` (currently guessed as `franka3`, `franka4`, `turntable2`).
+
 ## Phase 1 tests — sim component checks
 
 Every test follows the same skeleton (~50 lines each):
@@ -144,11 +154,20 @@ Every test follows the same skeleton (~50 lines each):
 ```python
 rospy.init_node("test_X", anonymous=True)
 wait_for_sim()
+require_models("test_X", "model_a", "model_b")   # SKIP (exit 2) if missing
 # do thing
 # check result
 print("PASS test_X (...)" if ok else f"FAIL test_X ({reason})")
 sys.exit(0 if ok else 1)
 ```
+
+### Exit code convention
+
+- **0 = PASS** — component works as intended.
+- **1 = FAIL** — component is deployed but broken. File the issue with the responsible team.
+- **2 = SKIP** — required component isn't deployed yet. Not a bug, not a regression — Team 8 just hasn't shipped this part of the spec. `run_all.sh` tracks SKIP separately from FAIL so partial deployments don't masquerade as broken software.
+
+`require_models("test_name", *model_names)` in [helpers.py](helpers.py) does the preflight check: queries Gazebo's model list, exits with SKIP + a clear "models not deployed yet: [...]" message if any are missing.
 
 ### `test_cup_stack.py` — does a stacked cup stay put?
 
@@ -158,15 +177,17 @@ sys.exit(0 if ok else 1)
 
 ### `test_dispenser_lever.py` — does the lever joint actuate and return?
 
-- Read `dispenser1` lever joint angle. Apply effort via `/gazebo/apply_joint_effort`. Read again. Release. Read again.
-- **PASS** if the joint moved past a threshold, then returned to within 0.05 rad of neutral.
-- **Catches:** joint dropped from URDF, [dispenser_spring.py](../ros/meam520_labs/scripts/dispenser_spring.py) not running, spring constant misconfigured.
+- Read `dispenser1::lever` joint angle via `/gazebo/get_joint_properties`. Apply 5 N·m for 0.5 s via `/gazebo/apply_joint_effort`. Read peak. Wait 2 s for [dispenser_spring.py](../ros/meam520_labs/scripts/dispenser_spring.py) to return it. Read rest.
+- **PASS** if `|peak - neutral| > 0.2 rad` AND `|rest - neutral| < 0.05 rad`.
+- **Catches:** joint dropped from URDF, [dispenser_spring.py](../ros/meam520_labs/scripts/dispenser_spring.py) not running, spring constant misconfigured, `/gazebo/apply_joint_effort` regression. Failure message distinguishes "didn't move" from "didn't return" so the right person gets paged.
 
 ### `test_turntable.py` — does the turntable rotate, and does a cup ride along?
 
-- Spawn a cup on the turntable. Send the rotate command (0 → π/2). Wait. Check turntable yaw and cup yaw both moved by ~π/2.
-- **PASS** if cup angular position within 0.1 rad of turntable's.
-- **Catches:** turntable joint not actuated, cup not in contact, friction broken.
+- Teleport `cup_z_021` onto the turntable surface (offset 0.10 m in +x from centre, 0.05 m above the surface) via `set_pose` — no spawning, reuse the existing cup model. Read initial yaw of `turntable::upper_base` (the rotating link) and initial cup x/y. Apply 1.0 N·m to `turntable::base_rotate` for 1 s via `/gazebo/apply_joint_effort`. Wait 1 s. Re-read.
+- **PASS** if turntable rotated by > 0.2 rad AND cup horizontal position changed by > 0.02 m.
+- **Catches:** turntable joint dropped from URDF, `/gazebo/apply_joint_effort` regression, cup not in contact, friction broken.
+- **Why effort-on-joint, not the velocity controller:** Team 8's `turntable.launch` spawns a `turntable/turntable_controller` (velocity_controllers/JointVelocityController) but the controller_manager service it depends on never appears at runtime — `/turntable/controller_manager/list_controllers` doesn't exist, only `/turntable/joint_states` is published. The spawner fails silently. Bypassing via `/gazebo/apply_joint_effort` (the same approach [dispenser_spring.py](../ros/meam520_labs/scripts/dispenser_spring.py) uses) drives the joint directly through Gazebo and tests what we actually care about: the joint is actuated and the cup follows.
+- **Cleanup note:** `finally:` block restores `cup_z_021` to its yaml spawn pose `(0, 0, 0.21)` after the test. Without this, re-running `run_all.sh` against the same sim would fail `test_cup_stack` the second time because the cup would still be on the turntable.
 
 ### `test_gripper_grasp.py` — gripper API smoke test
 
@@ -227,9 +248,10 @@ From `team-09-main/`:
 ./run_all.sh
 ```
 
-- Iterates `test_*.py`, runs each with `python3`, captures exit code.
-- Prints a summary: `PASSED: N  FAILED: M` plus names of failing tests.
-- Exits non-zero if any test failed (CI-friendly).
+- Iterates `test_*.py` in lexical order, runs each with `python3`, prints the test's own output, captures exit code.
+- Buckets by exit code: 0 → PASSED, 2 → SKIPPED, anything else → FAILED.
+- After all tests, prints `PASSED: N / FAILED: M / SKIPPED: K` plus the names of failing and skipped scripts.
+- Exits 0 if no FAILs (skipped tests are not failures — Team 8 just hasn't shipped that part of the sim yet); 1 if anything failed.
 - Assumes `roslaunch meam520_labs project.launch` is already running — individual tests give a clear error if not.
 
 ---

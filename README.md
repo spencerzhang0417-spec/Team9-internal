@@ -85,9 +85,19 @@ Team 8's world exposes everything we need over `gazebo_msgs` — no extra plumbi
 | Arm control | `ArmController(id=1)` / `ArmController(id=2)` (see [labs/final/final.py](../labs/final/final.py)) | Drive arms into test configurations |
 | Comms | `from trail_mix.interface import TrailMixInterface` | Publish/subscribe with type + enum + `order_id>0` validation |
 
+### Phase 0 — Deployment readiness probe
+
+- **`test_deployment.py`** — what sim components and controllers are currently deployed? Reports models present/missing vs the project spec (4 Frankas, 2 turntables, 6 dispensers, 4 cups) and probes each expected `controller_manager`. Always exits 0 — pure diagnostic. Use it to know what other tests will SKIP vs RUN.
+
+Tests use a shared exit-code convention:
+
+- **0 = PASS** — component works.
+- **1 = FAIL** — component is deployed but broken (file with responsible team).
+- **2 = SKIP** — required component isn't deployed yet (Team 8's sim is shipped progressively). `run_all.sh` tracks SKIP separately from FAIL.
+
 ### Phase 1 — Sim component checks
 
-One small script per component. Each one asks the question, prints PASS / FAIL with one line of context, exits. No frameworks, no fixtures.
+One small script per component. Each one asks the question, prints PASS / FAIL with one line of context, exits. No frameworks, no fixtures. All start with a `require_models(...)` preflight that SKIPs cleanly if its dependency hasn't been deployed.
 
 - **`test_cup_stack.py`** — does a stacked cup stay where it was spawned? Read pose, wait 5 s, read pose again. PASS if drift < 1 cm.
 - **`test_dispenser_lever.py`** — does the lever joint move when pushed and return when released? Apply effort, read joint angle, release, read again. PASS if it moved and came back.
