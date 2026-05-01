@@ -56,7 +56,11 @@ def get_pose(model_name):
     try:
         response = get_state(model_name, '')
     except rospy.ServiceException as e:
-        print(f"ERROR: get_pose('{model_name}') failed: {e}")
+        print(f"ERROR: get_pose('{model_name}') service call failed: {e}")
+        sys.exit(1)
+    if not response.success:
+        print(f"ERROR: get_pose('{model_name}') failed: {response.status_message}")
+        print(f"       Hint: check model names with `rosservice call /gazebo/get_world_properties`.")
         sys.exit(1)
     return response.pose
 
