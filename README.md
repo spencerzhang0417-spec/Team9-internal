@@ -92,7 +92,7 @@ One small script per component. Each one asks the question, prints PASS / FAIL w
 - **`test_cup_stack.py`** — does a stacked cup stay where it was spawned? Read pose, wait 5 s, read pose again. PASS if drift < 1 cm.
 - **`test_dispenser_lever.py`** — does the lever joint move when pushed and return when released? Apply effort, read joint angle, release, read again. PASS if it moved and came back.
 - **`test_turntable.py`** — does the turntable rotate to a commanded angle and carry a cup with it? Place a cup, command 90°, check both the table and the cup ended up rotated.
-- **`test_gripper_grasp.py`** — does closing the gripper on a cup hold the cup through a small lift? Close, lift, check the cup is still near the gripper.
+- **`test_gripper_grasp.py`** — gripper API smoke test: do `_gripper.move_joints(open)` and `_gripper.move_joints(close)` both complete? Catches a dead gripper action server. Does **not** test cup-gripper contact physics — that's Team 16's QC layer (their `pick_cup` test exercises the real grip-holds-cup question end-to-end, which is the right level).
 - **`test_arms_move.py`** — do `ArmController(id=1)` and `ArmController(id=2)` actually drive the arms? Send to neutral, send to a second pose, read joint states.
 
 Each script is self-contained: imports, init_node, do thing, assert, print result. Aim for ~50 lines.
@@ -103,15 +103,17 @@ Two small nodes — `service_mock.py` and `toppings_mock.py`. Each one:
 
 - Subscribes to `task_cmd` via `TrailMixInterface`.
 - For commands addressed to it, sleeps a plausible duration and publishes `robot_status="done"` back.
-- Helper in `tmi_helpers.py` builds well-formed `RobotStatus` messages (sets `order_id`, `timestamp`) so we don't trip the [interface.py:175-199](../team-02-main/src/trail_mix/interface.py#L175-L199) validator.
+- Helpers in [helpers.py](helpers.py) (`build_robot_status`, `build_robot_command`) construct well-formed messages — sets `order_id` (validator rejects `<= 0`) and `timestamp = rospy.Time.now()` — so we don't trip the [interface.py:175-199](../team-02-main/src/trail_mix/interface.py#L175-L199) validator. `trail_mix.msg` is lazy-imported inside the builders so Phase 1 tests can `import helpers` without `trail_mix` being built.
 
 That's the whole feature set. If Teams 5/6 later need failure injection or a no-Gazebo mode, we add it then — not before.
 
 ### Phase 3 — One end-to-end test
 
-`test_e2e_happy_path.py`: publish one `Order`, wait for the chain of `RobotStatus` messages our mocks emit, assert the order finishes. One scenario, one PASS / FAIL.
+`test_e2e_happy_path.py`: starts both mocks via `subprocess.Popen`, publishes the 8 `RobotCommand`s that Team 6 would emit for one order (`pick_cup` → `dispense_cereal` → `mix` → `exchange` → `dispense_nuts` → `dispense_candy` → `exchange` → `serve`), waits up to 30 s for a `RobotStatus(status="done")` matching every command, and PASSes iff every `(robot_group, action)` pair came back. We bypass the scheduler — Team 6's role of turning an `Order` into a sequence of `RobotCommand`s is performed by the test itself.
 
-More scenarios (queued orders, mid-flight failures) only get added if a consumer team asks for them.
+Requires roscore (or the project sim) to be running. Gazebo not strictly required for this test.
+
+More scenarios (queued orders, mid-flight failures, parallel lines) only get added if a consumer team asks for them.
 
 ## Known Gaps in Team 2's Interface (to surface, not ignore)
 
@@ -122,6 +124,15 @@ More scenarios (queued orders, mid-flight failures) only get added if a consumer
 - **No timestamp on `RobotCommand`, no per-command unique ID.** Limits ability to correlate retries and debug timing.
 
 These are normal v0.1 issues, not failures — but they need to land somewhere before our Phase 2 mocks commit to a particular interpretation.
+
+## Known Gaps in `core.interfaces.ArmController` (existing labs)
+
+- **Gripper sim-vs-real divergence.** Verified 2026-04-29 by inspecting `/franka_gripper/move/goal`:
+  - `arm.exec_gripper_cmd(width, force)` actuates the gripper in Gazebo but publishes **no** goal on the real robot when `force` is supplied. With no `force`, its effect is exactly equivalent to `arm._gripper.move_joints(width)` (it *is* the return value).
+  - `arm._gripper.grasp(...)` similarly does not publish on the real robot, though it works in sim.
+  - `arm._gripper.move_joints(width)` publishes correctly in **both** sim and real.
+
+  **Implication for our tests.** A grasp test that calls `exec_gripper_cmd(force=...)` would be a sim-only false green — passes in CI, silently does nothing on hardware. Therefore [test_gripper_grasp.py](test_gripper_grasp.py) (and any future grasp-using test) drives the gripper via `arm._gripper.move_joints(width)`. Other teams writing real-robot-portable code should do the same.
 
 ## Build & Run
 

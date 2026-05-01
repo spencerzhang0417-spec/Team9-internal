@@ -6,9 +6,9 @@ dispense_nuts / dispense_candy / exchange actions.
 Not in v1: --fail-rate, --no-sim, dispatch tables, retry logic.
 """
 
-# import rospy
-# from trail_mix.interface import TrailMixInterface
-# from helpers import build_robot_status
+import rospy
+from trail_mix.interface import TrailMixInterface as TMI
+from helpers import build_robot_status
 
 # Hardcoded plausible durations (seconds) — toppings robot actions only.
 TOPPINGS_ACTION_DURATIONS = {
@@ -19,18 +19,30 @@ TOPPINGS_ACTION_DURATIONS = {
 
 
 def on_task_cmd(msg, status_pub):
-    # Ignore unless msg.robot_group == "toppings".
-    # Publish in_progress, sleep duration, publish done.
-    pass
+    if msg.robot_group != "toppings":
+        return
+    if msg.action not in TOPPINGS_ACTION_DURATIONS:
+        return
+    rospy.loginfo("toppings_mock: %s order=%d (sleep %.1fs)",
+                  msg.action, msg.order_id, TOPPINGS_ACTION_DURATIONS[msg.action])
+    status_pub.publish(build_robot_status(
+        order_id=msg.order_id, robot_group="toppings",
+        action=msg.action, status="in_progress",
+    ))
+    rospy.sleep(TOPPINGS_ACTION_DURATIONS[msg.action])
+    status_pub.publish(build_robot_status(
+        order_id=msg.order_id, robot_group="toppings",
+        action=msg.action, status="done",
+    ))
 
 
 def main():
-    # rospy.init_node("toppings_mock")
-    # tmi = TrailMixInterface()
-    # status_pub = tmi.robot_status.publisher()
-    # tmi.task_cmd.subscriber(lambda m: on_task_cmd(m, status_pub))
-    # rospy.spin()
-    pass
+    rospy.init_node("toppings_mock")
+    status_pub = TMI.robot_status.publisher(queue_size=10)
+    TMI.task_cmd.subscriber(lambda m: on_task_cmd(m, status_pub))
+    rospy.loginfo("toppings_mock ready (actions: %s)",
+                  list(TOPPINGS_ACTION_DURATIONS))
+    rospy.spin()
 
 
 if __name__ == "__main__":

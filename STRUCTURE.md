@@ -73,10 +73,10 @@ Phase 1 doesn't import `trail_mix` at all; Phase 2/3 don't strictly need Gazebo 
 | Team 2 adds a new enum value | Nothing. | We send only valid ones; new values are additive. |
 | Team 8 renames a model in [project_scene_spawn.yaml](../ros/meam520_labs/config/project_scene_spawn.yaml) | Whichever test names that model. | Hardcoded model names — see mitigation #2 below. |
 | Team 8 changes a joint name on dispenser/turntable | `test_dispenser_lever.py`, `test_turntable.py`. | Hardcoded joint names — same mitigation. |
-| Team 8 changes the world layout (moves franka1) | Pose-specific tests. | `ArmController` abstracts pose relative to arm base, so most tests survive. |
+| Team 8 changes the world layout (moves franka1 or cup spawn) | Pose-specific tests, when we add them (`test_turntable.py` will spawn a cup on the turntable). `test_arms_move.py` and `test_gripper_grasp.py` are world-layout-independent — the former uses neutral + relative perturbation; the latter only checks the gripper API. | Most current tests are layout-independent by design. |
 | Teams 11–19 ship real controllers | **Nothing.** Our mocks become unused. | We don't depend on Teams 11–19; they replace our mocks. |
 | Teams 5/6 change scheduling logic | **Nothing for Phase 1/2.** Phase 3 publishes its own commands. | We test against the contract, not against any specific scheduler. |
-| `core.interfaces.ArmController` API changes | Phase 1 arm/grasp tests. | Stable API in existing labs; low risk. |
+| `core.interfaces.ArmController` API changes | Phase 1 arm/grasp tests. | Mostly stable, but gripper API has a known sim-vs-real split — see [README.md § Known Gaps in `core.interfaces.ArmController`](README.md#known-gaps-in-coreinterfacesarmcontroller-existing-labs). |
 
 ### Three mitigations baked into our design
 
@@ -120,6 +120,7 @@ Topic strings come from `TrailMixInterface` attributes — never hardcoded here.
 | `wait_for_sim(timeout=30)` | Polls `/gazebo/get_model_state`. If Gazebo isn't up, exits with a clear "Run `roslaunch meam520_labs project.launch`" message instead of a stack trace. |
 | `get_pose(model_name)` | Wraps `/gazebo/get_model_state`, returns `Pose`. |
 | `set_pose(model_name, x, y, z, yaw=0)` | Wraps `/gazebo/set_model_state` for seeding fixtures at known poses. |
+| `get_link_pose(link_name)` | Wraps `/gazebo/get_link_state`. `link_name` is `"model::link"` (e.g. `"franka1::panda_hand"`). Bypasses tf because the `world → franka1/base` static transform in [project.launch](../ros/meam520_labs/launch/project.launch) is identity while Gazebo spawns franka1 at `y=-0.99`. |
 | `spawn_cup(name, x, y, z)` | Wraps `/gazebo/spawn_sdf_model` using the cup SDF at `meam520_labs/meshes/cup_final/model.sdf` (same path [scene_model_spawner.py](../ros/meam520_labs/scripts/scene_model_spawner.py) uses). |
 | `delete_model(name)` | Cleanup after a test that spawned something. |
 
@@ -167,11 +168,12 @@ sys.exit(0 if ok else 1)
 - **PASS** if cup angular position within 0.1 rad of turntable's.
 - **Catches:** turntable joint not actuated, cup not in contact, friction broken.
 
-### `test_gripper_grasp.py` — does the gripper hold a cup through a lift?
+### `test_gripper_grasp.py` — gripper API smoke test
 
-- `ArmController(id=1)` to a known above-cup pose, open gripper, lower, close gripper, lift 10 cm.
-- **PASS** if cup's z rose by ≥ 8 cm and stayed there 3 s after the lift.
-- **Catches:** gripper geometry broken, finger friction wrong, cup mass tuning.
+- `ArmController(id=1).move_to_neutral()` → `_gripper.move_joints(0.08)` → `_gripper.move_joints(0.00)`. PASS if neither call raises.
+- **Scope: API smoke only.** Verifies the gripper action server is up and `move_joints` is wired correctly. Catches "gripper namespace misconfigured", "action server crashed at sim start", "API regression breaks move_joints".
+- **Does NOT test contact physics** (does the closed gripper hold a cup against gravity?). We tried that with several approaches — teleport-then-close, physics pause, slow close — and every one was brittle: position-controller compliance under contact wobbles the wrist 3°+, blocking action calls hang while physics is paused, contact dynamics eject the cup unpredictably. The *correct* level for the grip-holds-cup question is **Team 16's service-robot QC**: when their `pick_cup` test runs, the real picking controller drives the real gripper around a real cup and a held-cup outcome falls out as a side effect. Layered tests work; duplicating their test at our scope did not.
+- Gripper open/close uses `arm._gripper.move_joints(width)` — **not** `exec_gripper_cmd` or `_gripper.grasp`. See [README.md § Known Gaps in `core.interfaces.ArmController`](README.md#known-gaps-in-coreinterfacesarmcontroller-existing-labs) for why those are sim-only false greens. The smoke test exercises the supported path so a regression on `move_joints` itself surfaces here.
 
 ### `test_arms_move.py` — do `ArmController(1)` and `ArmController(2)` drive the arms?
 
@@ -203,12 +205,13 @@ sys.exit(0 if ok else 1)
 
 ### `test_e2e_happy_path.py` — does an Order flow through the mocks to completion?
 
-- `subprocess.Popen` both mocks. Wait ~2 s for subscribers to register.
-- Publish a sequence of `RobotCommand` messages mirroring what Team 6 would emit for one order: `pick_cup` → `dispense_cereal` → `mix` → `exchange` → `dispense_nuts` → `dispense_candy` → `exchange` → `serve`.
-- Subscribe to `robot_status`, collect for 30 s.
+- Subscribe to `robot_status` *before* starting the mocks (so we don't miss early statuses).
+- `subprocess.Popen` both mocks (with `cwd=team-09-main/` so they can import `helpers`). Then poll `cmd_pub.get_num_connections()` until it reaches 2 — this is more robust than a fixed sleep and handles slow rospy startup. If under 2 after 10 s, FAIL early naming the connection count.
+- Publish a sequence of `RobotCommand` messages mirroring what Team 6 would emit for one order: `pick_cup` → `dispense_cereal` → `mix` → `exchange` → `dispense_nuts` → `dispense_candy` → `exchange` → `serve`. Both `exchange` actions appear, one per `robot_group`, and they stay distinct in our `(group, action)` set.
+- Wait up to 30 s for every `(group, action)` to come back as `status="done"`.
 - **PASS** if every command got a matching `done` response.
-- **FAIL** with the missing action(s) named.
-- `finally:` kills the mock subprocesses.
+- **FAIL** naming the missing `(group, action)` pair(s).
+- `finally:` `terminate()` → `wait(5 s)` → `kill()` for both mock subprocesses.
 
 Self-contained — one `python3 test_e2e_happy_path.py` runs the whole scenario; no need to start mocks in separate terminals.
 

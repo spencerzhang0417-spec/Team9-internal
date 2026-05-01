@@ -12,9 +12,9 @@ Not in v1: --fail-rate, --no-sim, dispatch tables, retry logic. Add only when
 a consumer team explicitly asks.
 """
 
-# import rospy
-# from trail_mix.interface import TrailMixInterface
-# from helpers import build_robot_status
+import rospy
+from trail_mix.interface import TrailMixInterface as TMI
+from helpers import build_robot_status
 
 # Hardcoded plausible durations (seconds) — service robot actions only.
 SERVICE_ACTION_DURATIONS = {
@@ -27,18 +27,30 @@ SERVICE_ACTION_DURATIONS = {
 
 
 def on_task_cmd(msg, status_pub):
-    # Ignore unless msg.robot_group == "service".
-    # Publish in_progress, sleep duration, publish done.
-    pass
+    if msg.robot_group != "service":
+        return
+    if msg.action not in SERVICE_ACTION_DURATIONS:
+        return
+    rospy.loginfo("service_mock: %s order=%d (sleep %.1fs)",
+                  msg.action, msg.order_id, SERVICE_ACTION_DURATIONS[msg.action])
+    status_pub.publish(build_robot_status(
+        order_id=msg.order_id, robot_group="service",
+        action=msg.action, status="in_progress",
+    ))
+    rospy.sleep(SERVICE_ACTION_DURATIONS[msg.action])
+    status_pub.publish(build_robot_status(
+        order_id=msg.order_id, robot_group="service",
+        action=msg.action, status="done",
+    ))
 
 
 def main():
-    # rospy.init_node("service_mock")
-    # tmi = TrailMixInterface()
-    # status_pub = tmi.robot_status.publisher()
-    # tmi.task_cmd.subscriber(lambda m: on_task_cmd(m, status_pub))
-    # rospy.spin()
-    pass
+    rospy.init_node("service_mock")
+    status_pub = TMI.robot_status.publisher(queue_size=10)
+    TMI.task_cmd.subscriber(lambda m: on_task_cmd(m, status_pub))
+    rospy.loginfo("service_mock ready (actions: %s)",
+                  list(SERVICE_ACTION_DURATIONS))
+    rospy.spin()
 
 
 if __name__ == "__main__":

@@ -11,7 +11,10 @@ No test framework, no result reporting, no fixtures — keep this file small.
 
 import sys
 import rospy
-from gazebo_msgs.srv import GetModelState
+from gazebo_msgs.srv import GetModelState, SetModelState, GetLinkState
+from gazebo_msgs.msg import ModelState
+from geometry_msgs.msg import Pose, Point, Quaternion
+from tf.transformations import quaternion_from_euler
 
 # ---------------------------------------------------------------------------
 # Constants — mirror project_scene_spawn.yaml + launch files.
@@ -60,7 +63,33 @@ def get_pose(model_name):
 
 def set_pose(model_name, x, y, z, yaw=0):
     # Wrap /gazebo/set_model_state. Used to seed fixtures at known poses.
-    pass
+    qx, qy, qz, qw = quaternion_from_euler(0, 0, yaw)
+    state = ModelState(
+        model_name=model_name,
+        pose=Pose(position=Point(x=x, y=y, z=z),
+                  orientation=Quaternion(x=qx, y=qy, z=qz, w=qw)),
+        reference_frame='world',
+    )
+    set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
+    try:
+        set_state(state)
+    except rospy.ServiceException as e:
+        print(f"ERROR: set_pose('{model_name}') failed: {e}")
+        sys.exit(1)
+
+
+def get_link_pose(link_name):
+    # Wrap /gazebo/get_link_state. link_name is "model::link" (e.g. "franka1::panda_hand").
+    # Bypasses tf because project.launch's world->franka1/base static transform is
+    # identity even though Gazebo spawns franka1 at y=-0.99 — tf gives wrong world
+    # coords. Gazebo's link state is authoritative.
+    proxy = rospy.ServiceProxy('/gazebo/get_link_state', GetLinkState)
+    try:
+        response = proxy(link_name, 'world')
+    except rospy.ServiceException as e:
+        print(f"ERROR: get_link_pose('{link_name}') failed: {e}")
+        sys.exit(1)
+    return response.link_state.pose
 
 
 def spawn_cup(name, x, y, z):
@@ -80,11 +109,24 @@ def delete_model(name):
 # ---------------------------------------------------------------------------
 
 def build_robot_status(order_id, robot_group, action, status, detail=""):
-    # Returns a trail_mix/RobotStatus with timestamp = rospy.Time.now().
-    # Used by service_mock.py and toppings_mock.py.
-    pass
+    # Lazy import so Phase 1 tests can import helpers.py without trail_mix built.
+    from trail_mix.msg import RobotStatus
+    return RobotStatus(
+        order_id=order_id,
+        robot_group=robot_group,
+        action=action,
+        status=status,
+        detail=detail,
+        timestamp=rospy.Time.now(),
+    )
 
 
 def build_robot_command(order_id, robot_group, action, target_id="", quantity=1):
-    # Returns a trail_mix/RobotCommand. Used by test_e2e_happy_path.py.
-    pass
+    from trail_mix.msg import RobotCommand
+    return RobotCommand(
+        order_id=order_id,
+        robot_group=robot_group,
+        action=action,
+        target_id=target_id,
+        quantity=quantity,
+    )
