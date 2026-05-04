@@ -33,7 +33,7 @@ JOINT = f"{TURNTABLE_MODEL}::{TURNTABLE_JOINT}"
 
 CUP_OFFSET = 0.10        # cup placed this far in +x from the turntable centre
 CUP_HEIGHT_OFFSET = 0.05 # above the turntable surface so it settles on top
-EFFORT = 1.0             # N·m applied to base_rotate
+EFFORT = 1.5             # N·m applied to base_rotate
 EFFORT_DURATION = 1.0    # s
 SETTLE_S = 1.0
 PASS_TT_YAW = 0.2        # turntable must rotate at least this much

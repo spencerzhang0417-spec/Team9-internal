@@ -18,7 +18,7 @@ from gazebo_msgs.srv import ApplyJointEffort, GetJointProperties
 from helpers import wait_for_sim, require_models, DISPENSER_MODEL, DISPENSER_LEVER_JOINT
 
 LEVER = f"{DISPENSER_MODEL}::{DISPENSER_LEVER_JOINT}"
-PUSH_EFFORT = 5.0       # N·m applied by apply_joint_effort
+PUSH_EFFORT = 15.0      # N·m applied by apply_joint_effort
 PUSH_DURATION = 0.5     # seconds the effort is applied for
 SPRING_SETTLE_S = 2.0   # how long to wait for dispenser_spring to return it
 PASS_PEAK_RAD = 0.2     # joint must deflect at least this much when pushed
